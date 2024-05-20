@@ -13,6 +13,8 @@ use RealRashid\SweetAlert\Facades\Alert;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PDF;
+use App\Http\Resources\APIResource;
+use GuzzleHttp\Client;
 
 
 use Maatwebsite\Excel\Facades\Excel;
@@ -29,9 +31,11 @@ class EmployeeController extends Controller
         $pageTitle = 'Employee List';
 
         confirmDelete();
-        $positions = Position::all();
-        return view('employee.index', compact('pageTitle', 'positions'));
+
+        $employeeData = $this->handleApiRequest('get', 'employees');
+        return view('employee.index', ['employees' => $employeeData, 'pageTitle' => $pageTitle]);
     }
+
 
 
 
@@ -55,44 +59,48 @@ class EmployeeController extends Controller
      */
     public function store(Request $request)
     {
+        // Melakukan Pesan Validasi Nilai Input
         $messages = [
-            'required' => ':Attribute harus diisi.',
-            'email' => 'Isi :attribute dengan format yang benar',
-            'numeric' => 'Isi :attribute dengan angka'
+            'required' => ':Attribute must be filled.',
+            'email' => 'Fill :attribute with the correct format.',
+            'numeric' => 'Fill :attribute with numeric.',
+            'email.unique' => 'The email address has been registered.',
         ];
+
+        // Validasi
         $validator = Validator::make($request->all(), [
             'firstName' => 'required',
             'lastName' => 'required',
-            'email' => 'required|email',
+            'email' => 'required|email|unique:employees,email',
             'age' => 'required|numeric',
         ], $messages);
+
+
+        // Check Response Validasi
         if ($validator->fails()) {
             return redirect()->back()->withErrors($validator)->withInput();
         }
-        // Get File
-        $file = $request->file('cv');
-        if ($file != null) {
-            $originalFilename = $file->getClientOriginalName();
-            $encryptedFilename = $file->hashName();
-            // Store File
-            $file->store('public/files');
-        }
-        // ELOQUENT
-        $employee = new Employee;
-        $employee->firstname = $request->firstName;
-        $employee->lastname = $request->lastName;
-        $employee->email = $request->email;
-        $employee->age = $request->age;
-        $employee->position_id = $request->position;
-        if ($file != null) {
-            $employee->original_filename = $originalFilename;
-            $employee->encrypted_filename = $encryptedFilename;
-        }
-        $employee->save();
 
-        Alert::success('Added Successfully', 'Employee Data Added Successfully.');
-        return redirect()->route('employees.index');
+        $employeeData = [
+            'firstName' => $request->input('firstName'),
+            'lastName' => $request->input('lastName'),
+            'email' => $request->input('email'),
+            'age' => $request->input('age'),
+            'position_id' => $request->input('position'),
+            'cv' => $request->file('cv')
+        ];
+
+        // Send API request
+        $client = $this->getClient();
+        $response = $client->post('employees', [
+            'json' => $employeeData
+        ]);
+
+        $responseData = json_decode($response->getBody(), true);
+        Alert::success('Updated Successfully', 'Employee Data Updated Successfully.');
+        return redirect()->route('employees.index')->with('success', 'Employee created successfully');
     }
+
 
 
     /**
@@ -101,18 +109,10 @@ class EmployeeController extends Controller
     public function show(string $id)
     {
         $pageTitle = 'Employee Detail';
-
-        $employee = DB::table('employees')
-            ->select('employees.*', 'positions.name as position_name', 'employees.id as employee_id')
-            ->leftJoin('positions', 'employees.position_id', '=', 'positions.id')
-            ->where('employees.id', $id)
-            ->first();
-
-        // ELOQUENT
-        $employee = Employee::find($id);
-
-        return view('employee.show', compact('pageTitle', 'employee'));
+        $employeeData = $this->handleApiRequest('get', 'employees/' . $id);
+        return view('employee.show', ['employee' => $employeeData, 'pageTitle' => $pageTitle]);
     }
+
 
 
     /**
@@ -144,30 +144,48 @@ class EmployeeController extends Controller
      */
     public function update(Request $request, string $id)
     {
+        // Melakukan Pesan Validasi Nilai Input
         $messages = [
-            'required' => ':Attribute harus diisi.',
-            'email' => 'Isi :attribute dengan format yang benar',
-            'numeric' => 'Isi :attribute dengan angka'
+            'required' => ':Attribute must be filled.',
+            'email' => 'Fill :attribute with the correct format.',
+            'numeric' => 'Fill :attribute with numeric.',
+            'email.unique' => 'The email address has been registered.',
         ];
+
+        // Validasi
         $validator = Validator::make($request->all(), [
             'firstName' => 'required',
             'lastName' => 'required',
-            'email' => 'required|email',
+            'email' => 'required|email|unique:employees,email,' . $id,
             'age' => 'required|numeric',
         ], $messages);
+
+        // Check Response Validasi
         if ($validator->fails()) {
             return redirect()->back()->withErrors($validator)->withInput();
         }
-        // ELOQUENT
-        $employee = Employee::find($id);
-        $employee->firstname = $request->firstName;
-        $employee->lastname = $request->lastName;
-        $employee->email = $request->email;
-        $employee->age = $request->age;
-        $employee->position_id = $request->position;
-        $employee->save();
-        return redirect()->route('employees.index');
+
+        // Prepare data for API request
+        $employeeData = [
+            'firstName' => $request->input('firstName'),
+            'lastName' => $request->input('lastName'),
+            'email' => $request->input('email'),
+            'age' => $request->input('age'),
+            'position_id' => $request->input('position'),
+            'cv' => $request->file('cv')
+        ];
+
+        // Send API request
+            $client = $this->getClient();
+            $response = $client->put('employees/' . $id, [
+                'json' => $employeeData
+            ]);
+
+            $responseData = json_decode($response->getBody(), true);
+            Alert::success('Updated Successfully', 'Employee Data Updated Successfully.');
+            return redirect()->route('employees.index');
     }
+
 
 
     /**
@@ -175,13 +193,13 @@ class EmployeeController extends Controller
      */
     public function destroy(string $id)
     {
-        // ELOQUENT
 
-        Employee::find($id)->delete();
-
+        $this->handleApiRequest('delete', 'employees/' . $id);
         Alert::success('Deleted Successfully', 'Employee Data Deleted Successfully.');
         return redirect()->route('employees.index');
+
     }
+
 
     public function __construct()
     {
@@ -297,4 +315,52 @@ class EmployeeController extends Controller
 
         return $pdf->download('employees.pdf');
     }
+
+
+
+
+
+
+
+
+
+
+    private function getClient()
+    {
+        return new Client([
+            'base_uri' => "http://127.0.0.1:8000/api/",
+            'headers' => [
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . session('api_token'),
+            ],
+        ]);
+    }
+
+
+
+
+    private function handleApiRequest($method, $uri, $params = [])
+    {
+        try {
+            $response = $this->getClient()->$method($uri, $params);
+            $responseBody = json_decode($response->getBody(), true);
+
+            if ($response->getStatusCode() != 200) {
+                throw new \Exception('Failed to fetch data.');
+            }
+
+            return $responseBody['data'];
+        } catch (\Exception $e) {
+            return redirect()->back()->withErrors(['error' => 'Failed to fetch data: ' . $e->getMessage()]);
+        }
+    }
+
+
+
+
+
+
+
+
 }
